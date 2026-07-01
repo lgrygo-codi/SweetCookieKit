@@ -85,6 +85,34 @@ struct SnappyDecoderTests {
 
         #expect(decoded == nil)
     }
+
+    @Test
+    func `returns nil when decoded length does not match header`() {
+        let payload = Array("hello".utf8)
+        var data = Data()
+        data.append(self.varint32(payload.count + 1))
+        data.append(UInt8((payload.count - 1) << 2))
+        data.append(contentsOf: payload)
+
+        #expect(SnappyDecoder.decompress(data) == nil)
+    }
+
+    @Test
+    func `rejects huge declared length without allocating it`() {
+        let data = Data([0xFF, 0xFF, 0xFF, 0xFF, 0x0F])
+
+        #expect(SnappyDecoder.decompress(data) == nil)
+    }
+
+    @Test
+    func `rejects literal larger than decoded length budget`() {
+        let payload = Array(repeating: UInt8(ascii: "a"), count: 70)
+        var data = Data([0x01])
+        data.append(contentsOf: self.snappyLiteralTagBytes(length: payload.count))
+        data.append(contentsOf: payload)
+
+        #expect(SnappyDecoder.decompress(data) == nil)
+    }
 }
 
 extension SnappyDecoderTests {

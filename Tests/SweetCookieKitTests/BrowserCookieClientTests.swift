@@ -82,7 +82,8 @@ struct BrowserCookieClientTests {
             value: "1")
         try Self.writeCookieFile(
             home.appendingPathComponent(
-                "Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteDataStore/Profile 1/WebsiteData/Cookies/Cookies.binarycookies"),
+                "Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteDataStore")
+                .appendingPathComponent("Profile 1/WebsiteData/Cookies/Cookies.binarycookies"),
             domain: "profile1.example",
             name: "profile1",
             value: "1")
@@ -126,6 +127,33 @@ struct BrowserCookieClientTests {
 
         #expect(records.map(\.domain) == ["profile.example"])
         #expect(records.map(\.value) == ["profile"])
+    }
+
+    @Test
+    func `safari rejects truncated cookie files`() throws {
+        let home = try Self.makeTemporaryHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let cookieURL = home.appendingPathComponent("Library/Cookies/Cookies.binarycookies")
+        try FileManager.default.createDirectory(
+            at: cookieURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        let validData = Self.binaryCookieData(domain: "synthetic.example", name: "session", value: "synthetic")
+        try validData.write(to: cookieURL)
+
+        let client = BrowserCookieClient(configuration: .init(homeDirectories: [home]))
+        let store = try #require(client.stores(for: .safari).first)
+        for length in 0..<validData.count {
+            try Data(validData.prefix(length)).write(to: cookieURL)
+            #expect(throws: BrowserCookieError.self) {
+                try client.records(matching: .init(), in: store)
+            }
+        }
+
+        try (Data("cook".utf8) + Data([0xFF, 0xFF, 0xFF, 0xFF])).write(to: cookieURL)
+        #expect(throws: BrowserCookieError.self) {
+            try client.records(matching: .init(), in: store)
+        }
     }
 
     private static func makeTemporaryHome() throws -> URL {

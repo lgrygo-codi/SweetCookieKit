@@ -164,6 +164,7 @@ public enum ChromiumLocalStorageReader {
         if requiresPrefix, bytes.first != 0x5F {
             return nil
         }
+        guard startIndex >= 0, startIndex < bytes.count else { return nil }
 
         guard let splitIndex = bytes[startIndex...].firstIndex(of: 0x00) else { return nil }
         guard splitIndex + 1 < bytes.count else { return nil }

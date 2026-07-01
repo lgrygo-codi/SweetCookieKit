@@ -5,9 +5,9 @@ import Foundation
 enum SnappyDecoder {
     static func decompress(_ data: Data) -> Data? {
         var reader = ByteReader(data)
-        guard let expectedLength = reader.readVarint32() else { return nil }
+        guard let rawExpectedLength = reader.readVarint32() else { return nil }
+        let expectedLength = Int(rawExpectedLength)
         var output: [UInt8] = []
-        output.reserveCapacity(Int(expectedLength))
 
         while reader.hasBytes {
             guard let tag = reader.readUInt8() else { break }
@@ -15,7 +15,10 @@ enum SnappyDecoder {
             switch type {
             case 0:
                 let literalLength = Self.readLiteralLength(tag: tag, reader: &reader)
-                guard literalLength > 0, let literal = reader.readBytes(count: literalLength) else {
+                guard literalLength > 0,
+                      literalLength <= expectedLength - output.count,
+                      let literal = reader.readBytes(count: literalLength)
+                else {
                     return nil
                 }
                 output.append(contentsOf: literal)
@@ -24,24 +27,40 @@ enum SnappyDecoder {
                 guard let low = reader.readUInt8() else { return nil }
                 let offset = (Int(tag >> 5) << 8) | Int(low)
                 guard offset > 0 else { return nil }
-                Self.copyBytes(length: length, offset: offset, output: &output)
+                guard Self.copyBytes(
+                    length: length,
+                    offset: offset,
+                    expectedLength: expectedLength,
+                    output: &output)
+                else { return nil }
             case 2:
                 let length = Int(tag >> 2) + 1
                 guard let offset = reader.readUInt16LE() else { return nil }
                 let offsetValue = Int(offset)
                 guard offsetValue > 0 else { return nil }
-                Self.copyBytes(length: length, offset: offsetValue, output: &output)
+                guard Self.copyBytes(
+                    length: length,
+                    offset: offsetValue,
+                    expectedLength: expectedLength,
+                    output: &output)
+                else { return nil }
             case 3:
                 let length = Int(tag >> 2) + 1
                 guard let offset = reader.readUInt32LE() else { return nil }
                 let offsetValue = Int(offset)
                 guard offsetValue > 0 else { return nil }
-                Self.copyBytes(length: length, offset: offsetValue, output: &output)
+                guard Self.copyBytes(
+                    length: length,
+                    offset: offsetValue,
+                    expectedLength: expectedLength,
+                    output: &output)
+                else { return nil }
             default:
                 return nil
             }
         }
 
+        guard output.count == expectedLength else { return nil }
         return Data(output)
     }
 
@@ -60,12 +79,18 @@ enum SnappyDecoder {
         return computed + 1
     }
 
-    private static func copyBytes(length: Int, offset: Int, output: inout [UInt8]) {
-        guard offset <= output.count else { return }
+    private static func copyBytes(
+        length: Int,
+        offset: Int,
+        expectedLength: Int,
+        output: inout [UInt8]) -> Bool
+    {
+        guard offset <= output.count, length <= expectedLength - output.count else { return false }
         let start = output.count - offset
         for index in 0..<length {
             output.append(output[start + (index % offset)])
         }
+        return true
     }
 
     private struct ByteReader {

@@ -159,8 +159,11 @@ extension ChromiumLocalStorageReader {
         logger: ((String) -> Void)? = nil) -> Data?
     {
         let start = handle.offset
-        let end = handle.offset + handle.size
-        guard start >= 0, end + 5 <= data.count else { return nil }
+        guard start >= 0, start <= data.count,
+              handle.size >= 0, handle.size <= data.count - start
+        else { return nil }
+        let end = start + handle.size
+        guard data.count - end >= 5 else { return nil }
         let rawBlock = data.subdata(in: start..<end)
         let compressionType = data[end]
         switch compressionType {
@@ -203,6 +206,7 @@ extension ChromiumLocalStorageReader {
             let value = data.subdata(in: offset..<valueEnd)
             offset = valueEnd
 
+            guard shared <= lastKey.count else { break }
             let prefix = lastKey.prefix(Int(shared))
             var fullKey = Data(prefix)
             fullKey.append(keySuffix)
@@ -233,7 +237,10 @@ extension ChromiumLocalStorageReader {
         guard let offset = reader.readVarint64(),
               let size = reader.readVarint64()
         else { return nil }
-        return BlockHandle(offset: Int(offset), size: Int(size))
+        guard let parsedOffset = Int(exactly: offset),
+              let parsedSize = Int(exactly: size)
+        else { return nil }
+        return BlockHandle(offset: parsedOffset, size: parsedSize)
     }
 
     private static func decodeBlockHandle(from value: Data) -> BlockHandle? {
@@ -241,7 +248,10 @@ extension ChromiumLocalStorageReader {
         guard let offset = reader.readVarint64(),
               let size = reader.readVarint64()
         else { return nil }
-        return BlockHandle(offset: Int(offset), size: Int(size))
+        guard let parsedOffset = Int(exactly: offset),
+              let parsedSize = Int(exactly: size)
+        else { return nil }
+        return BlockHandle(offset: parsedOffset, size: parsedSize)
     }
 
     // MARK: - Data helpers
@@ -322,7 +332,7 @@ extension ChromiumLocalStorageReader {
     private static func readLengthPrefixedSlice(_ data: Data, at offset: inout Int) -> Data? {
         guard let length = self.readVarint32(data, at: &offset) else { return nil }
         let count = Int(length)
-        guard count >= 0, offset + count <= data.count else { return nil }
+        guard offset <= data.count, count <= data.count - offset else { return nil }
         let slice = data.subdata(in: offset..<(offset + count))
         offset += count
         return slice

@@ -98,6 +98,18 @@ struct ChromiumLocalStorageReaderTests {
 
         #expect(tokens.contains(token))
     }
+
+    @Test
+    func `ignores empty level DB keys`() throws {
+        let levelDBURL = try self.makeLevelDBDirectory()
+        try self.writeLog(entries: [(Data(), self.localStorageValue("ignored"), false)], to: levelDBURL)
+
+        let entries = ChromiumLocalStorageReader.readEntries(
+            for: "https://example.com",
+            in: levelDBURL)
+
+        #expect(entries.isEmpty)
+    }
 }
 
 extension ChromiumLocalStorageReaderTests {

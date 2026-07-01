@@ -160,67 +160,94 @@ enum SafariCookieImporter {
     private static func parseBinaryCookies(data: Data) throws -> [CookieRecord] {
         let reader = DataReader(data)
         guard reader.readASCII(count: 4) == "cook" else { throw ImportError.invalidFile }
-        let pageCount = Int(reader.readUInt32BE())
-        guard pageCount >= 0 else { throw ImportError.invalidFile }
+        guard let rawPageCount = reader.readUInt32BE() else { throw ImportError.invalidFile }
+        let pageCount = Int(rawPageCount)
+        guard pageCount <= reader.remaining / MemoryLayout<UInt32>.size else {
+            throw ImportError.invalidFile
+        }
 
         var pageSizes: [Int] = []
         pageSizes.reserveCapacity(pageCount)
         for _ in 0..<pageCount {
-            pageSizes.append(Int(reader.readUInt32BE()))
+            guard let rawSize = reader.readUInt32BE() else { throw ImportError.invalidFile }
+            pageSizes.append(Int(rawSize))
         }
 
         var records: [CookieRecord] = []
         var offset = reader.offset
         for size in pageSizes {
-            guard offset + size <= data.count else { throw ImportError.invalidFile }
+            guard size >= 8, size <= data.count - offset else { throw ImportError.invalidFile }
             let pageData = data.subdata(in: offset..<(offset + size))
-            records.append(contentsOf: Self.parsePage(data: pageData))
+            try records.append(contentsOf: Self.parsePage(data: pageData))
             offset += size
         }
         return records
     }
 
-    private static func parsePage(data: Data) -> [CookieRecord] {
+    private static func parsePage(data: Data) throws -> [CookieRecord] {
         let r = DataReader(data)
-        _ = r.readUInt32LE() // page header
-        let cookieCount = Int(r.readUInt32LE())
-        if cookieCount <= 0 { return [] }
+        guard r.readUInt32LE() != nil, // page header
+              let rawCookieCount = r.readUInt32LE()
+        else { throw ImportError.invalidFile }
+        let cookieCount = Int(rawCookieCount)
+        if cookieCount == 0 { return [] }
+        guard cookieCount <= r.remaining / MemoryLayout<UInt32>.size else {
+            throw ImportError.invalidFile
+        }
 
         var cookieOffsets: [Int] = []
         cookieOffsets.reserveCapacity(cookieCount)
         for _ in 0..<cookieCount {
-            cookieOffsets.append(Int(r.readUInt32LE()))
+            guard let rawOffset = r.readUInt32LE() else { throw ImportError.invalidFile }
+            cookieOffsets.append(Int(rawOffset))
         }
 
         return cookieOffsets.compactMap { offset in
-            guard offset >= 0, offset + 56 <= data.count else { return nil }
+            guard offset <= data.count - 56 else { return nil }
             return Self.parseCookieRecord(data: data, offset: offset)
         }
     }
 
     private static func parseCookieRecord(data: Data, offset: Int) -> CookieRecord? {
         let r = DataReader(data, offset: offset)
-        let size = Int(r.readUInt32LE())
-        guard size > 0, offset + size <= data.count else { return nil }
+        guard let rawSize = r.readUInt32LE() else { return nil }
+        let size = Int(rawSize)
+        guard size >= 56, size <= data.count - offset else { return nil }
 
-        _ = r.readUInt32LE() // unknown
-        let flags = r.readUInt32LE()
-        _ = r.readUInt32LE() // unknown
+        guard r.readUInt32LE() != nil, // unknown
+              let flags = r.readUInt32LE(),
+              r.readUInt32LE() != nil, // unknown
+              let rawURLOffset = r.readUInt32LE(),
+              let rawNameOffset = r.readUInt32LE(),
+              let rawPathOffset = r.readUInt32LE(),
+              let rawValueOffset = r.readUInt32LE(),
+              r.readUInt32LE() != nil, // commentOffset
+              r.readUInt32LE() != nil, // commentURL
+              let expiresRef = r.readDoubleLE(),
+              r.readDoubleLE() != nil // creation
+        else { return nil }
 
-        let urlOffset = Int(r.readUInt32LE())
-        let nameOffset = Int(r.readUInt32LE())
-        let pathOffset = Int(r.readUInt32LE())
-        let valueOffset = Int(r.readUInt32LE())
-        _ = r.readUInt32LE() // commentOffset
-        _ = r.readUInt32LE() // commentURL
-
-        let expiresRef = r.readDoubleLE()
-        _ = r.readDoubleLE() // creation
-
-        let domain = Self.readCString(data: data, base: offset, offset: urlOffset) ?? ""
-        let name = Self.readCString(data: data, base: offset, offset: nameOffset) ?? ""
-        let path = Self.readCString(data: data, base: offset, offset: pathOffset) ?? "/"
-        let value = Self.readCString(data: data, base: offset, offset: valueOffset) ?? ""
+        let limit = offset + size
+        let domain = Self.readCString(
+            data: data,
+            base: offset,
+            relativeOffset: Int(rawURLOffset),
+            limit: limit) ?? ""
+        let name = Self.readCString(
+            data: data,
+            base: offset,
+            relativeOffset: Int(rawNameOffset),
+            limit: limit) ?? ""
+        let path = Self.readCString(
+            data: data,
+            base: offset,
+            relativeOffset: Int(rawPathOffset),
+            limit: limit) ?? "/"
+        let value = Self.readCString(
+            data: data,
+            base: offset,
+            relativeOffset: Int(rawValueOffset),
+            limit: limit) ?? ""
 
         if domain.isEmpty || name.isEmpty { return nil }
 
@@ -238,10 +265,10 @@ enum SafariCookieImporter {
             isHTTPOnly: isHTTPOnly)
     }
 
-    private static func readCString(data: Data, base: Int, offset: Int) -> String? {
-        let start = base + offset
-        guard start >= 0, start < data.count else { return nil }
-        let end = data[start...].firstIndex(of: 0) ?? data.count
+    private static func readCString(data: Data, base: Int, relativeOffset: Int, limit: Int) -> String? {
+        guard base <= limit, limit <= data.count, relativeOffset < limit - base else { return nil }
+        let start = base + relativeOffset
+        let end = data[start..<limit].firstIndex(of: 0) ?? limit
         guard end > start else { return nil }
         return String(data: data.subdata(in: start..<end), encoding: .utf8)
     }
@@ -359,30 +386,39 @@ private final class DataReader {
     }
 
     func readASCII(count: Int) -> String? {
-        let d = self.read(count)
+        guard let d = self.read(count) else { return nil }
         return String(data: d, encoding: .ascii)
     }
 
-    func read(_ count: Int) -> Data {
-        let end = min(self.offset + count, self.data.count)
+    var remaining: Int {
+        self.data.count - self.offset
+    }
+
+    func read(_ count: Int) -> Data? {
+        guard count >= 0, count <= self.remaining else { return nil }
+        let end = self.offset + count
         let slice = self.data[self.offset..<end]
         self.offset = end
         return Data(slice)
     }
 
-    func readUInt32BE() -> UInt32 {
-        let d = self.read(4)
-        return d.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+    func readUInt32BE() -> UInt32? {
+        guard let d = self.read(MemoryLayout<UInt32>.size) else { return nil }
+        return d.reduce(0) { ($0 << 8) | UInt32($1) }
     }
 
-    func readUInt32LE() -> UInt32 {
-        let d = self.read(4)
-        return d.withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
+    func readUInt32LE() -> UInt32? {
+        guard let d = self.read(MemoryLayout<UInt32>.size) else { return nil }
+        return d.enumerated().reduce(0) { value, element in
+            value | (UInt32(element.element) << UInt32(element.offset * 8))
+        }
     }
 
-    func readDoubleLE() -> Double {
-        let d = self.read(8)
-        let raw = d.withUnsafeBytes { $0.load(as: UInt64.self).littleEndian }
+    func readDoubleLE() -> Double? {
+        guard let d = self.read(MemoryLayout<UInt64>.size) else { return nil }
+        let raw = d.enumerated().reduce(UInt64(0)) { value, element in
+            value | (UInt64(element.element) << UInt64(element.offset * 8))
+        }
         return Double(bitPattern: raw)
     }
 }

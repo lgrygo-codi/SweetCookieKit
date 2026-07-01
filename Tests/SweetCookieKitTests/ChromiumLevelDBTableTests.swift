@@ -46,6 +46,23 @@ struct ChromiumLevelDBTableTests {
         #expect(entries.first?.key == "session")
         #expect(entries.first?.value == "value-raw")
     }
+
+    @Test
+    func `ignores out of range block handles`() throws {
+        let levelDBURL = try self.makeLevelDBDirectory()
+        var footer = Data([0, 0])
+        footer.append(self.varint64(UInt64.max))
+        footer.append(self.varint64(UInt64.max))
+        footer.append(contentsOf: Array(repeating: 0, count: 40 - footer.count))
+        footer.append(contentsOf: Array(repeating: 0, count: 8))
+        try footer.write(to: levelDBURL.appendingPathComponent("000005.ldb"))
+
+        let entries = ChromiumLocalStorageReader.readEntries(
+            for: "https://example.com",
+            in: levelDBURL)
+
+        #expect(entries.isEmpty)
+    }
 }
 
 extension ChromiumLevelDBTableTests {
@@ -175,8 +192,12 @@ extension ChromiumLevelDBTableTests {
     }
 
     private func varint64(_ value: Int) -> Data {
+        self.varint64(UInt64(value))
+    }
+
+    private func varint64(_ value: UInt64) -> Data {
         var result = Data()
-        var remaining = UInt64(value)
+        var remaining = value
         while true {
             if remaining & ~0x7F == 0 {
                 result.append(UInt8(remaining))
