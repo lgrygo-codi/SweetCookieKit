@@ -9,6 +9,7 @@ struct BrowserMetadata {
     let defaultImportOrderRank: Int
     let chromiumProfileRelativePath: String?
     let geckoProfilesFolder: String?
+    let geckoProfileSelection: GeckoProfileSelection
     let safeStorageLabels: [(service: String, account: String)]
     let appBundleName: String?
 
@@ -19,6 +20,7 @@ struct BrowserMetadata {
         defaultImportOrderRank: Int,
         chromiumProfileRelativePath: String?,
         geckoProfilesFolder: String?,
+        geckoProfileSelection: GeckoProfileSelection = .all,
         safeStorageLabels: [(service: String, account: String)],
         appBundleName: String? = nil)
     {
@@ -28,8 +30,27 @@ struct BrowserMetadata {
         self.defaultImportOrderRank = defaultImportOrderRank
         self.chromiumProfileRelativePath = chromiumProfileRelativePath
         self.geckoProfilesFolder = geckoProfilesFolder
+        self.geckoProfileSelection = geckoProfileSelection
         self.safeStorageLabels = safeStorageLabels
         self.appBundleName = appBundleName
+    }
+}
+
+enum GeckoProfileSelection: Equatable {
+    case all
+    case remotingNames(Set<String>, includeUnidentified: Bool)
+
+    func includes(remotingName: String?) -> Bool {
+        switch self {
+        case .all:
+            true
+        case let .remotingNames(expected, includeUnidentified):
+            if let remotingName {
+                expected.contains(remotingName.lowercased())
+            } else {
+                includeUnidentified
+            }
+        }
     }
 }
 
@@ -142,12 +163,41 @@ enum BrowserCatalog {
                 defaultImportOrderRank: 11,
                 chromiumProfileRelativePath: nil,
                 geckoProfilesFolder: "Firefox",
+                geckoProfileSelection: .remotingNames(["firefox", "firefox-esr"], includeUnidentified: true),
+                safeStorageLabels: []),
+            BrowserMetadata(
+                browser: .firefoxBeta,
+                displayName: "Firefox Beta",
+                engine: .gecko,
+                defaultImportOrderRank: 12,
+                chromiumProfileRelativePath: nil,
+                geckoProfilesFolder: "Firefox",
+                geckoProfileSelection: .remotingNames(["firefox-beta"], includeUnidentified: false),
+                safeStorageLabels: [],
+                appBundleName: "Firefox"),
+            BrowserMetadata(
+                browser: .firefoxDeveloperEdition,
+                displayName: "Firefox Developer Edition",
+                engine: .gecko,
+                defaultImportOrderRank: 13,
+                chromiumProfileRelativePath: nil,
+                geckoProfilesFolder: "Firefox",
+                geckoProfileSelection: .remotingNames(["firefox-dev"], includeUnidentified: false),
+                safeStorageLabels: []),
+            BrowserMetadata(
+                browser: .firefoxNightly,
+                displayName: "Firefox Nightly",
+                engine: .gecko,
+                defaultImportOrderRank: 14,
+                chromiumProfileRelativePath: nil,
+                geckoProfilesFolder: "Firefox",
+                geckoProfileSelection: .remotingNames(["firefox-nightly"], includeUnidentified: false),
                 safeStorageLabels: []),
             BrowserMetadata(
                 browser: .zen,
                 displayName: "Zen",
                 engine: .gecko,
-                defaultImportOrderRank: 12,
+                defaultImportOrderRank: 15,
                 chromiumProfileRelativePath: nil,
                 geckoProfilesFolder: "zen",
                 safeStorageLabels: []),
@@ -155,7 +205,7 @@ enum BrowserCatalog {
                 browser: .chromeBeta,
                 displayName: "Chrome Beta",
                 engine: .chromium,
-                defaultImportOrderRank: 13,
+                defaultImportOrderRank: 16,
                 chromiumProfileRelativePath: "Google/Chrome Beta",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: [],
@@ -164,7 +214,7 @@ enum BrowserCatalog {
                 browser: .chromeCanary,
                 displayName: "Chrome Canary",
                 engine: .chromium,
-                defaultImportOrderRank: 14,
+                defaultImportOrderRank: 17,
                 chromiumProfileRelativePath: "Google/Chrome Canary",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: [],
@@ -173,7 +223,7 @@ enum BrowserCatalog {
                 browser: .arcBeta,
                 displayName: "Arc Beta",
                 engine: .chromium,
-                defaultImportOrderRank: 15,
+                defaultImportOrderRank: 18,
                 chromiumProfileRelativePath: "Arc Beta/User Data",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: [("Arc Safe Storage", "Arc Beta")]),
@@ -181,7 +231,7 @@ enum BrowserCatalog {
                 browser: .arcCanary,
                 displayName: "Arc Canary",
                 engine: .chromium,
-                defaultImportOrderRank: 16,
+                defaultImportOrderRank: 19,
                 chromiumProfileRelativePath: "Arc Canary/User Data",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: [("Arc Safe Storage", "Arc Canary")]),
@@ -189,7 +239,7 @@ enum BrowserCatalog {
                 browser: .braveBeta,
                 displayName: "Brave Beta",
                 engine: .chromium,
-                defaultImportOrderRank: 17,
+                defaultImportOrderRank: 20,
                 chromiumProfileRelativePath: "BraveSoftware/Brave-Browser-Beta",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: [],
@@ -198,7 +248,7 @@ enum BrowserCatalog {
                 browser: .braveNightly,
                 displayName: "Brave Nightly",
                 engine: .chromium,
-                defaultImportOrderRank: 18,
+                defaultImportOrderRank: 21,
                 chromiumProfileRelativePath: "BraveSoftware/Brave-Browser-Nightly",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: [],
@@ -207,7 +257,7 @@ enum BrowserCatalog {
                 browser: .edgeBeta,
                 displayName: "Microsoft Edge Beta",
                 engine: .chromium,
-                defaultImportOrderRank: 19,
+                defaultImportOrderRank: 22,
                 chromiumProfileRelativePath: "Microsoft Edge Beta",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: []),
@@ -215,7 +265,7 @@ enum BrowserCatalog {
                 browser: .edgeCanary,
                 displayName: "Microsoft Edge Canary",
                 engine: .chromium,
-                defaultImportOrderRank: 20,
+                defaultImportOrderRank: 23,
                 chromiumProfileRelativePath: "Microsoft Edge Canary",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: []),
@@ -223,7 +273,7 @@ enum BrowserCatalog {
                 browser: .comet,
                 displayName: "Comet",
                 engine: .chromium,
-                defaultImportOrderRank: 21,
+                defaultImportOrderRank: 24,
                 chromiumProfileRelativePath: "Comet",
                 geckoProfilesFolder: nil,
                 safeStorageLabels: [("Comet Safe Storage", "Comet")]),

@@ -18,6 +18,9 @@ public enum Browser: String, Sendable, Hashable, CaseIterable {
     case chromium
     case yandex
     case firefox
+    case firefoxBeta
+    case firefoxDeveloperEdition
+    case firefoxNightly
     case zen
     case brave
     case braveBeta
@@ -159,8 +162,12 @@ extension Collection<Browser> {
     public var loginHint: String {
         let names = map(\.displayName)
         guard let last = names.last else { return "browser" }
-        if names.count == 1 { return last }
-        if names.count == 2 { return "\(names[0]) or \(last)" }
+        if names.count == 1 {
+            return last
+        }
+        if names.count == 2 {
+            return "\(names[0]) or \(last)"
+        }
         return "\(names.dropLast().joined(separator: ", ")), or \(last)"
     }
 }

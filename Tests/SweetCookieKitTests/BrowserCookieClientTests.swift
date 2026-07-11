@@ -34,6 +34,9 @@ struct BrowserCookieClientTests {
         #expect(order.contains(.chrome))
         #expect(order.contains(.dia))
         #expect(order.contains(.firefox))
+        #expect(order.contains(.firefoxBeta))
+        #expect(order.contains(.firefoxDeveloperEdition))
+        #expect(order.contains(.firefoxNightly))
         #expect(order.contains(.zen))
         #expect(Set(order).count == order.count)
 
@@ -49,6 +52,45 @@ struct BrowserCookieClientTests {
         #expect(query.domains.isEmpty)
         #expect(query.domainMatch == .contains)
         #expect(query.includeExpired == false)
+    }
+
+    @Test
+    func `firefox channel stores are classified without duplicates`() throws {
+        let home = try Self.makeTemporaryHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let profiles: [(directory: String, remotingName: String?)] = [
+            ("release.default-release", "firefox"),
+            ("esr.default-esr", "firefox-esr"),
+            ("beta.default-beta", "firefox-beta"),
+            ("developer.dev-edition-default", "firefox-dev"),
+            ("nightly.default-nightly", "firefox-nightly"),
+            ("legacy.default", nil),
+        ]
+        for profile in profiles {
+            try Self.writeGeckoProfile(
+                home: home,
+                directory: profile.directory,
+                remotingName: profile.remotingName)
+        }
+
+        let client = BrowserCookieClient(configuration: .init(homeDirectories: [home]))
+        let expectedProfiles: [Browser: Set<String>] = [
+            .firefox: ["release.default-release", "esr.default-esr", "legacy.default"],
+            .firefoxBeta: ["beta.default-beta"],
+            .firefoxDeveloperEdition: ["developer.dev-edition-default"],
+            .firefoxNightly: ["nightly.default-nightly"],
+        ]
+
+        let browsers = expectedProfiles.keys.sorted { $0.rawValue < $1.rawValue }
+        for browser in browsers {
+            let names = Set(client.stores(for: browser).map(\.profile.name))
+            #expect(names == expectedProfiles[browser])
+        }
+
+        let stores = client.stores(in: browsers)
+        let databasePaths = stores.compactMap(\.databaseURL?.path)
+        #expect(Set(databasePaths).count == databasePaths.count)
     }
 
     @Test
@@ -161,6 +203,24 @@ struct BrowserCookieClientTests {
             .appendingPathComponent("SweetCookieKitTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private static func writeGeckoProfile(home: URL, directory: String, remotingName: String?) throws {
+        let profile = home.appendingPathComponent("Library/Application Support/Firefox/Profiles/\(directory)")
+        try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+        try Data().write(to: profile.appendingPathComponent("cookies.sqlite"))
+        guard let remotingName else { return }
+
+        let application = home.appendingPathComponent("Applications/\(remotingName)/Contents/Resources")
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try "[App]\nRemotingName=\(remotingName)\n".write(
+            to: application.appendingPathComponent("application.ini"),
+            atomically: true,
+            encoding: .utf8)
+        try "[Compatibility]\nLastAppDir=\(application.appendingPathComponent("browser").path)\n".write(
+            to: profile.appendingPathComponent("compatibility.ini"),
+            atomically: true,
+            encoding: .utf8)
     }
 
     private static func writeCookieFile(_ url: URL, domain: String, name: String, value: String) throws {

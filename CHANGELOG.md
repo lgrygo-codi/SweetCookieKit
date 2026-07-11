@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Firefox: discover Beta, Developer Edition, and Nightly profiles as distinct stores without cross-channel duplicates. (#12, thanks @BasixKOR)
 - Security: reject malformed Safari cookie and Chromium LevelDB/Snappy data without unchecked reads or unbounded allocations.
 
 ## 0.4.1 — 2026-05-10

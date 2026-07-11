@@ -1,7 +1,8 @@
 # SweetCookieKit
 
 SweetCookieKit extracts browser cookies on macOS and returns them as normalized records or
-`HTTPCookie` values. It supports Safari, Chromium-based browsers, and Firefox.
+`HTTPCookie` values. It supports Safari, Chromium-based browsers, Firefox
+Release/Beta/Developer Edition/Nightly, and Zen.
 
 Use it when you need to:
 
