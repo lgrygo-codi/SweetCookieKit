@@ -53,6 +53,10 @@ enum GeckoCookieImporter {
         }
         return candidates
             .filter { FileManager.default.fileExists(atPath: $0.cookiesDB.path) }
+            .filter { candidate in
+                metadata.geckoProfileSelection.includes(
+                    remotingName: Self.remotingName(for: candidate.cookiesDB.deletingLastPathComponent()))
+            }
             .map { candidate in
                 BrowserCookieStore(
                     browser: candidate.browser,
@@ -208,7 +212,9 @@ enum GeckoCookieImporter {
         .sorted { lhs, rhs in
             let left = Self.profileSortKey(lhs.lastPathComponent)
             let right = Self.profileSortKey(rhs.lastPathComponent)
-            if left.rank != right.rank { return left.rank < right.rank }
+            if left.rank != right.rank {
+                return left.rank < right.rank
+            }
             return left.name < right.name
         }
 
@@ -223,9 +229,59 @@ enum GeckoCookieImporter {
 
     private static func profileSortKey(_ name: String) -> (rank: Int, name: String) {
         let lower = name.lowercased()
-        if lower.contains("default-release") { return (0, lower) }
-        if lower.contains("default") { return (1, lower) }
+        if lower.contains("default-release") {
+            return (0, lower)
+        }
+        if lower.contains("default") {
+            return (1, lower)
+        }
         return (2, lower)
+    }
+
+    /// Gecko channels share a profile root. The profile's last application identifies
+    /// which installed channel currently owns it without relying on profile naming.
+    private static func remotingName(for profileDirectory: URL) -> String? {
+        let compatibilityURL = profileDirectory.appendingPathComponent("compatibility.ini")
+        guard let compatibility = Self.iniContents(at: compatibilityURL) else { return nil }
+
+        let appDirectory = Self.iniValue(named: "LastAppDir", in: compatibility)
+        let platformDirectory = Self.iniValue(named: "LastPlatformDir", in: compatibility)
+        var applicationINIs: [URL] = []
+        if let appDirectory, appDirectory.hasPrefix("/") {
+            applicationINIs.append(
+                URL(fileURLWithPath: appDirectory)
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("application.ini"))
+        }
+        if let platformDirectory, platformDirectory.hasPrefix("/") {
+            applicationINIs.append(
+                URL(fileURLWithPath: platformDirectory)
+                    .appendingPathComponent("application.ini"))
+        }
+
+        for applicationINI in applicationINIs {
+            guard let application = Self.iniContents(at: applicationINI),
+                  let remotingName = Self.iniValue(named: "RemotingName", in: application),
+                  !remotingName.isEmpty
+            else { continue }
+            return remotingName
+        }
+        return nil
+    }
+
+    private static func iniContents(at url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 64 * 1024) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func iniValue(named name: String, in contents: String) -> String? {
+        let prefix = "\(name)="
+        for line in contents.split(whereSeparator: { $0.isNewline }) where line.hasPrefix(prefix) {
+            return String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
     }
 }
 #endif

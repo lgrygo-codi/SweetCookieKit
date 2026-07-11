@@ -41,7 +41,23 @@ struct BrowserCatalogTests {
     @Test
     func `gecko profiles folder expected names`() {
         #expect(BrowserCatalog.metadata(for: .firefox).geckoProfilesFolder == "Firefox")
+        #expect(BrowserCatalog.metadata(for: .firefoxBeta).geckoProfilesFolder == "Firefox")
+        #expect(BrowserCatalog.metadata(for: .firefoxDeveloperEdition).geckoProfilesFolder == "Firefox")
+        #expect(BrowserCatalog.metadata(for: .firefoxNightly).geckoProfilesFolder == "Firefox")
         #expect(BrowserCatalog.metadata(for: .zen).geckoProfilesFolder == "zen")
+    }
+
+    @Test
+    func `firefox channels select profiles by remoting name`() {
+        #expect(BrowserCatalog.metadata(for: .firefox).geckoProfileSelection ==
+            .remotingNames(["firefox", "firefox-esr"], includeUnidentified: true))
+        #expect(BrowserCatalog.metadata(for: .firefoxBeta).geckoProfileSelection ==
+            .remotingNames(["firefox-beta"], includeUnidentified: false))
+        #expect(BrowserCatalog.metadata(for: .firefoxDeveloperEdition).geckoProfileSelection ==
+            .remotingNames(["firefox-dev"], includeUnidentified: false))
+        #expect(BrowserCatalog.metadata(for: .firefoxNightly).geckoProfileSelection ==
+            .remotingNames(["firefox-nightly"], includeUnidentified: false))
+        #expect(BrowserCatalog.metadata(for: .zen).geckoProfileSelection == .all)
     }
 
     @Test
@@ -63,6 +79,9 @@ struct BrowserCatalogTests {
         #expect(Browser.brave.appBundleName == "Brave Browser")
         #expect(Browser.braveNightly.appBundleName == "Brave Browser Nightly")
         #expect(Browser.yandex.appBundleName == "Yandex")
+        #expect(Browser.firefoxBeta.appBundleName == "Firefox")
+        #expect(Browser.firefoxDeveloperEdition.appBundleName == "Firefox Developer Edition")
+        #expect(Browser.firefoxNightly.appBundleName == "Firefox Nightly")
         #expect(Browser.safari.appBundleName == "Safari")
     }
 
@@ -72,6 +91,9 @@ struct BrowserCatalogTests {
         #expect(Browser.yandex.chromiumProfileRelativePath == "Yandex/YandexBrowser")
         #expect(Browser.comet.chromiumProfileRelativePath == "Comet")
         #expect(Browser.firefox.geckoProfilesFolder == "Firefox")
+        #expect(Browser.firefoxBeta.geckoProfilesFolder == "Firefox")
+        #expect(Browser.firefoxDeveloperEdition.geckoProfilesFolder == "Firefox")
+        #expect(Browser.firefoxNightly.geckoProfilesFolder == "Firefox")
         #expect(Browser.zen.geckoProfilesFolder == "zen")
         #expect(Browser.safari.chromiumProfileRelativePath == nil)
     }
