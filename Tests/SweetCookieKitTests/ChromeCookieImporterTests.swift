@@ -6,6 +6,7 @@ import Testing
 
 #if os(macOS)
 
+@Suite(.serialized)
 struct ChromeCookieImporterTests {
     @Test
     func `decrypt chromium value strips mac OSV 10 prefix`() {
@@ -22,7 +23,7 @@ struct ChromeCookieImporterTests {
     }
 
     @Test
-    func `chrome safe storage key caches keys per browser`() throws {
+    func `chrome safe storage key caches noninteractive reads per browser`() throws {
         ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
         BrowserCookieKeychainAccessGate.isDisabled = false
         let recorder = LabelRecorder()
@@ -51,12 +52,137 @@ struct ChromeCookieImporterTests {
         #expect(chromeKey != heliumKey)
         #expect(recorder.snapshot().map { "\($0.service)|\($0.account)|\($0.allowInteraction)" } == [
             "Yandex Safe Storage|Yandex|false",
-            "Yandex Safe Storage|Yandex|true",
+            "Yandex Safe Storage|Yandex|false",
             "Chrome Safe Storage|Chrome|false",
-            "Chrome Safe Storage|Chrome|true",
+            "Chrome Safe Storage|Chrome|false",
             "Helium Storage Key|Helium|false",
-            "Helium Storage Key|Helium|true",
+            "Helium Storage Key|Helium|false",
         ])
+    }
+
+    @Test
+    func `chrome safe storage key never upgrades a no interaction scope to interactive`() {
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        BrowserCookieKeychainAccessGate.isDisabled = false
+        let recorder = LabelRecorder()
+
+        let lookup: ChromeCookieImporter.SafeStoragePasswordLookup = { service, account, allowInteraction in
+            recorder.record(service: service, account: account, allowInteraction: allowInteraction)
+            return (status: errSecInteractionNotAllowed, password: nil)
+        }
+
+        #expect(throws: ChromeCookieImporter.ImportError.self) {
+            try BrowserCookieKeychainAccessGate.withUserInteractionDisallowed {
+                try ChromeCookieImporter.chromeSafeStorageKey(for: .chrome, passwordLookup: lookup)
+            }
+        }
+        #expect(recorder.snapshot().map(\.allowInteraction) == [false])
+    }
+
+    @Test
+    func `chrome safe storage key finds a later noninteractive alias`() throws {
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        BrowserCookieKeychainAccessGate.isDisabled = false
+        let recorder = LabelRecorder()
+
+        let lookup: ChromeCookieImporter.SafeStoragePasswordLookup = { service, account, allowInteraction in
+            recorder.record(service: service, account: account, allowInteraction: allowInteraction)
+            if service == "Second Safe Storage" {
+                return (status: errSecSuccess, password: "second")
+            }
+            return (status: errSecInteractionNotAllowed, password: nil)
+        }
+
+        let key = try BrowserCookieKeychainAccessGate.withUserInteractionDisallowed {
+            try ChromeCookieImporter.chromeSafeStorageKey(
+                for: .chrome,
+                labels: [
+                    (service: "First Safe Storage", account: "First"),
+                    (service: "Second Safe Storage", account: "Second"),
+                ],
+                passwordLookup: lookup)
+        }
+
+        #expect(key.count == kCCKeySizeAES128)
+        #expect(recorder.snapshot().map(\.allowInteraction) == [false, false, false])
+    }
+
+    @Test
+    func `chrome safe storage key preserves interactive recovery by default`() throws {
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        BrowserCookieKeychainAccessGate.isDisabled = false
+        let recorder = LabelRecorder()
+
+        let lookup: ChromeCookieImporter.SafeStoragePasswordLookup = { service, account, allowInteraction in
+            recorder.record(service: service, account: account, allowInteraction: allowInteraction)
+            if allowInteraction {
+                return (status: errSecSuccess, password: "chrome")
+            }
+            return (status: errSecInteractionNotAllowed, password: nil)
+        }
+
+        let key = try ChromeCookieImporter.chromeSafeStorageKey(for: .chrome, passwordLookup: lookup)
+
+        #expect(key.count == kCCKeySizeAES128)
+        #expect(recorder.snapshot().map(\.allowInteraction) == [false, true])
+    }
+
+    @Test
+    func `chrome safe storage key stops after one cancelled interactive lookup`() {
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        BrowserCookieKeychainAccessGate.isDisabled = false
+        let recorder = LabelRecorder()
+
+        let lookup: ChromeCookieImporter.SafeStoragePasswordLookup = { service, account, allowInteraction in
+            recorder.record(service: service, account: account, allowInteraction: allowInteraction)
+            return allowInteraction
+                ? (status: errSecUserCanceled, password: nil)
+                : (status: errSecInteractionNotAllowed, password: nil)
+        }
+
+        #expect(throws: ChromeCookieImporter.ImportError.self) {
+            _ = try ChromeCookieImporter.chromeSafeStorageKey(
+                for: .chrome,
+                labels: [
+                    (service: "Chrome Safe Storage", account: "Chrome"),
+                    (service: "Second Safe Storage", account: "Second"),
+                ],
+                passwordLookup: lookup)
+        }
+        #expect(recorder.snapshot().map(\.allowInteraction) == [false, false, true])
+    }
+
+    @Test
+    func `chrome safe storage key stops after one failed interactive lookup`() {
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        BrowserCookieKeychainAccessGate.isDisabled = false
+        let recorder = LabelRecorder()
+
+        let lookup: ChromeCookieImporter.SafeStoragePasswordLookup = { service, account, allowInteraction in
+            recorder.record(service: service, account: account, allowInteraction: allowInteraction)
+            if allowInteraction, service == "Second Safe Storage" {
+                return (status: errSecSuccess, password: "ok")
+            }
+            return allowInteraction
+                ? (status: errSecAuthFailed, password: nil)
+                : (status: errSecInteractionNotAllowed, password: nil)
+        }
+
+        #expect(throws: ChromeCookieImporter.ImportError.self) {
+            _ = try ChromeCookieImporter.chromeSafeStorageKey(
+                for: .chrome,
+                labels: [
+                    (service: "Chrome Safe Storage", account: "Chrome"),
+                    (service: "Second Safe Storage", account: "Second"),
+                ],
+                passwordLookup: lookup)
+        }
+        #expect(recorder.snapshot().map(\.service) == [
+            "Chrome Safe Storage",
+            "Second Safe Storage",
+            "Chrome Safe Storage",
+        ])
+        #expect(recorder.snapshot().map(\.allowInteraction) == [false, false, true])
     }
 
     private static func encryptAES128CBCPKCS7(plaintext: Data, key: Data) -> Data {

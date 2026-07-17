@@ -202,7 +202,8 @@ enum ChromeCookieImporter {
 
     static func chromeSafeStorageKey(
         for browser: Browser,
-        passwordLookup: @escaping SafeStoragePasswordLookup) throws -> Data
+        labels overrideLabels: [(service: String, account: String)]? = nil,
+        passwordLookup rawLookup: @escaping SafeStoragePasswordLookup) throws -> Data
     {
         if BrowserCookieKeychainAccessGate.isDisabled {
             throw ImportError.keychainDenied
@@ -215,10 +216,20 @@ enum ChromeCookieImporter {
         }
         self.chromeSafeStorageKeyLock.unlock()
 
-        let labels = Self.safeStorageLabels(for: browser)
-
-        if let context = Self.preflightSafeStoragePrompt(labels: labels, passwordLookup: passwordLookup) {
+        let selection = Self.selectSafeStorageLabel(
+            overrideLabels ?? Self.safeStorageLabels(for: browser),
+            passwordLookup: rawLookup)
+        let labels = selection.labels
+        if let context = selection.promptContext {
             BrowserCookieKeychainPromptHandler.handler?(context)
+        }
+
+        func passwordLookup(
+            _ service: String,
+            _ account: String,
+            _: Bool) -> (status: OSStatus, password: String?)
+        {
+            rawLookup(service, account, selection.allowInteraction)
         }
 
         var password: String?
@@ -323,30 +334,47 @@ enum ChromeCookieImporter {
         return String(value[i...])
     }
 
-    private static func preflightSafeStoragePrompt(
-        labels: [(service: String, account: String)],
-        passwordLookup: SafeStoragePasswordLookup) -> BrowserCookieKeychainPromptContext?
+    private struct SafeStorageSelection {
+        let labels: [(service: String, account: String)]
+        let allowInteraction: Bool
+        let promptContext: BrowserCookieKeychainPromptContext?
+    }
+
+    private static func selectSafeStorageLabel(
+        _ labels: [(service: String, account: String)],
+        passwordLookup: SafeStoragePasswordLookup) -> SafeStorageSelection
     {
+        var interactionRequired: (service: String, account: String)?
         for label in labels {
             let result = passwordLookup(label.service, label.account, false)
-            switch result.status {
-            case errSecSuccess:
-                if result.password != nil { return nil }
-            case errSecInteractionNotAllowed:
-                return BrowserCookieKeychainPromptContext(
-                    service: label.service,
-                    account: label.account,
-                    label: label.service)
-            default:
-                continue
+            if result.password != nil {
+                return SafeStorageSelection(labels: [label], allowInteraction: false, promptContext: nil)
+            }
+            if result.status == errSecInteractionNotAllowed, interactionRequired == nil {
+                interactionRequired = label
             }
         }
-        return nil
+
+        guard !BrowserCookieKeychainAccessGate.isUserInteractionDisallowed,
+              let interactionRequired
+        else {
+            return SafeStorageSelection(labels: [], allowInteraction: false, promptContext: nil)
+        }
+        // Trying another gated alias after any failure could open a second authorization prompt.
+        return SafeStorageSelection(
+            labels: [interactionRequired],
+            allowInteraction: true,
+            promptContext: BrowserCookieKeychainPromptContext(
+                service: interactionRequired.service,
+                account: interactionRequired.account,
+                label: interactionRequired.service))
     }
 
     private static func safeStorageLabels(for browser: Browser) -> [(service: String, account: String)] {
         let labels = browser.safeStorageLabels
-        if !labels.isEmpty { return labels }
+        if !labels.isEmpty {
+            return labels
+        }
         return BrowserCatalog.safeStorageLabels
     }
 
