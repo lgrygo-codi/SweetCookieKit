@@ -1,8 +1,30 @@
 # Changelog
 
-## Unreleased
-- Firefox: discover Beta, Developer Edition, and Nightly profiles as distinct stores without cross-channel duplicates. (#12, thanks @BasixKOR)
-- Security: reject malformed Safari cookie and Chromium LevelDB/Snappy data without unchecked reads or unbounded allocations.
+## 0.5.0 — 2026-07-18
+
+### Highlights
+
+- Give each Chromium import explicit control over whether macOS Keychain may show user interaction, while preserving interactive recovery by default. (#15, thanks @Yuxin-Qiao)
+- Discover Firefox Beta, Developer Edition, and Nightly profiles as distinct stores without cross-channel duplicates. (#13, thanks @BasixKOR)
+- Reject malformed Safari cookie and Chromium LevelDB/Snappy data without unchecked reads or unbounded allocations. (#11)
+
+### Keychain access
+
+- Add `BrowserCookieKeychainAccessGate.withUserInteractionDisallowed` for background imports that must not display Keychain UI.
+- Try every available Chromium Safe Storage label without interaction before returning `BrowserCookieError.accessDenied`.
+
+### Browser support
+
+- Add typed browser cases, profile discovery, display metadata, and tests for Firefox Beta, Developer Edition, and Nightly.
+
+### Security and reliability
+
+- Bound Safari binary-cookie parsing and reject malformed page, record, and offset structures before reading them.
+- Harden Chromium LevelDB and Snappy decoding against truncated input, invalid lengths, and oversized allocations.
+
+### Maintenance
+
+- Update SwiftPM metadata for Swift 6.2 and keep the Swift-DocC plugin on the latest 1.5.0 release.
 
 ## 0.4.1 — 2026-05-10
 - Safari: discover profile-specific `WebsiteDataStore` cookie files and load cookies from the selected Safari store. (thanks @przemyslaw-szurmak)
