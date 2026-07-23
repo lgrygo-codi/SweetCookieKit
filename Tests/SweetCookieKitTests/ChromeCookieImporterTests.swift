@@ -1,5 +1,6 @@
 import CommonCrypto
 import Foundation
+import LocalAuthentication
 import Security
 import Testing
 @testable import SweetCookieKit
@@ -8,6 +9,24 @@ import Testing
 
 @Suite(.serialized)
 struct ChromeCookieImporterTests {
+    @Test
+    func `noninteractive safe storage query explicitly fails authentication UI`() {
+        let query = ChromeCookieImporter.makeGenericPasswordQuery(
+            service: "Comet Safe Storage",
+            account: "Comet",
+            allowInteraction: false)
+        let interactiveQuery = ChromeCookieImporter.makeGenericPasswordQuery(
+            service: "Comet Safe Storage",
+            account: "Comet",
+            allowInteraction: true)
+
+        let context = query[kSecUseAuthenticationContext as String] as? LAContext
+        #expect(context?.interactionNotAllowed == true)
+        #expect((query[kSecUseAuthenticationUI as String] as? String) == "u_AuthUIF")
+        #expect(interactiveQuery[kSecUseAuthenticationContext as String] == nil)
+        #expect(interactiveQuery[kSecUseAuthenticationUI as String] == nil)
+    }
+
     @Test
     func `decrypt chromium value strips mac OSV 10 prefix`() {
         let key = Data(repeating: 0x11, count: kCCKeySizeAES128)
