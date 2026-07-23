@@ -201,10 +201,16 @@ enum ChromeCookieImporter {
             status: OSStatus,
             password: String?)
 
+    typealias SafeStorageItemLookup =
+        @Sendable (_ service: String, _ account: String) -> (
+            status: OSStatus,
+            itemExists: Bool)
+
     static func chromeSafeStorageKey(
         for browser: Browser,
         labels overrideLabels: [(service: String, account: String)]? = nil,
-        passwordLookup rawLookup: @escaping SafeStoragePasswordLookup) throws -> Data
+        passwordLookup rawLookup: @escaping SafeStoragePasswordLookup,
+        itemLookup: @escaping SafeStorageItemLookup = Self.findGenericPasswordItem) throws -> Data
     {
         if BrowserCookieKeychainAccessGate.isDisabled {
             throw ImportError.keychainDenied
@@ -217,9 +223,13 @@ enum ChromeCookieImporter {
         }
         self.chromeSafeStorageKeyLock.unlock()
 
-        let selection = Self.selectSafeStorageLabel(
-            overrideLabels ?? Self.safeStorageLabels(for: browser),
-            passwordLookup: rawLookup)
+        let candidateLabels = overrideLabels ?? Self.safeStorageLabels(for: browser)
+        let selection = switch BrowserCookieKeychainAccessGate.safeStoragePreflightStrategy {
+        case .secretProbe:
+            Self.selectSafeStorageLabel(candidateLabels, passwordLookup: rawLookup)
+        case .metadataOnly:
+            Self.selectSafeStorageLabel(candidateLabels, itemLookup: itemLookup)
+        }
         let labels = selection.labels
         if let context = selection.promptContext {
             BrowserCookieKeychainPromptHandler.handler?(context)
@@ -371,6 +381,29 @@ enum ChromeCookieImporter {
                 label: interactionRequired.service))
     }
 
+    private static func selectSafeStorageLabel(
+        _ labels: [(service: String, account: String)],
+        itemLookup: SafeStorageItemLookup) -> SafeStorageSelection
+    {
+        guard !BrowserCookieKeychainAccessGate.isUserInteractionDisallowed else {
+            return SafeStorageSelection(labels: [], allowInteraction: false, promptContext: nil)
+        }
+
+        for label in labels {
+            let result = itemLookup(label.service, label.account)
+            if result.status == errSecSuccess, result.itemExists {
+                return SafeStorageSelection(
+                    labels: [label],
+                    allowInteraction: true,
+                    promptContext: BrowserCookieKeychainPromptContext(
+                        service: label.service,
+                        account: label.account,
+                        label: label.service))
+            }
+        }
+        return SafeStorageSelection(labels: [], allowInteraction: false, promptContext: nil)
+    }
+
     private static func safeStorageLabels(for browser: Browser) -> [(service: String, account: String)] {
         let labels = browser.safeStorageLabels
         if !labels.isEmpty {
@@ -395,6 +428,33 @@ enum ChromeCookieImporter {
         guard let data = result as? Data else { return (status, nil) }
         let password = String(data: data, encoding: .utf8)
         return (status, password)
+    }
+
+    private static func findGenericPasswordItem(
+        service: String,
+        account: String) -> (status: OSStatus, itemExists: Bool)
+    {
+        let query = self.makeGenericPasswordMetadataQuery(service: service, account: account)
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return (status, status == errSecSuccess && result != nil)
+    }
+
+    static func makeGenericPasswordMetadataQuery(
+        service: String,
+        account: String) -> [String: Any]
+    {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnAttributes as String: true,
+            kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: self.authenticationUIFailPolicy as CFString,
+        ]
     }
 
     static func makeGenericPasswordQuery(

@@ -28,6 +28,19 @@ struct ChromeCookieImporterTests {
     }
 
     @Test
+    func `metadata safe storage query never requests secret data or authentication UI`() {
+        let query = ChromeCookieImporter.makeGenericPasswordMetadataQuery(
+            service: "Comet Safe Storage",
+            account: "Comet")
+
+        let context = query[kSecUseAuthenticationContext as String] as? LAContext
+        #expect(query[kSecReturnAttributes as String] as? Bool == true)
+        #expect(query[kSecReturnData as String] == nil)
+        #expect(context?.interactionNotAllowed == true)
+        #expect((query[kSecUseAuthenticationUI as String] as? String) == "u_AuthUIF")
+    }
+
+    @Test
     func `decrypt chromium value strips mac OSV 10 prefix`() {
         let key = Data(repeating: 0x11, count: kCCKeySizeAES128)
         let prefix = Data((0..<32).map { UInt8($0) })
@@ -179,6 +192,114 @@ struct ChromeCookieImporterTests {
 
         #expect(key.count == kCCKeySizeAES128)
         #expect(promptRecorder.snapshot().isEmpty)
+    }
+
+    @Test
+    func `metadata only preflight performs one secret read for the selected alias`() throws {
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        BrowserCookieKeychainAccessGate.isDisabled = false
+        let passwordRecorder = LabelRecorder()
+        let metadataRecorder = LabelRecorder()
+
+        let lookup: ChromeCookieImporter.SafeStoragePasswordLookup = { service, account, allowInteraction in
+            passwordRecorder.record(service: service, account: account, allowInteraction: allowInteraction)
+            return allowInteraction
+                ? (status: errSecSuccess, password: "comet")
+                : (status: errSecInteractionNotAllowed, password: nil)
+        }
+        let itemLookup: ChromeCookieImporter.SafeStorageItemLookup = { service, account in
+            metadataRecorder.record(service: service, account: account, allowInteraction: false)
+            return (status: errSecSuccess, itemExists: service == "Comet Safe Storage")
+        }
+
+        let key = try BrowserCookieKeychainAccessGate.withMetadataOnlySafeStoragePreflight {
+            try ChromeCookieImporter.chromeSafeStorageKey(
+                for: .comet,
+                labels: [
+                    (service: "Missing Safe Storage", account: "Missing"),
+                    (service: "Comet Safe Storage", account: "Comet"),
+                    (service: "Unused Safe Storage", account: "Unused"),
+                ],
+                passwordLookup: lookup,
+                itemLookup: itemLookup)
+        }
+
+        #expect(key.count == kCCKeySizeAES128)
+        #expect(metadataRecorder.snapshot().map(\.service) == [
+            "Missing Safe Storage",
+            "Comet Safe Storage",
+        ])
+        #expect(passwordRecorder.snapshot().map { "\($0.service)|\($0.allowInteraction)" } == [
+            "Comet Safe Storage|true",
+        ])
+    }
+
+    @Test
+    func `metadata only preflight never reads a secret when interaction is disallowed`() {
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        BrowserCookieKeychainAccessGate.isDisabled = false
+        let passwordRecorder = LabelRecorder()
+        let metadataRecorder = LabelRecorder()
+
+        let lookup: ChromeCookieImporter.SafeStoragePasswordLookup = { service, account, allowInteraction in
+            passwordRecorder.record(service: service, account: account, allowInteraction: allowInteraction)
+            return (status: errSecSuccess, password: "must-not-be-read")
+        }
+        let itemLookup: ChromeCookieImporter.SafeStorageItemLookup = { service, account in
+            metadataRecorder.record(service: service, account: account, allowInteraction: false)
+            return (status: errSecSuccess, itemExists: true)
+        }
+
+        #expect(throws: ChromeCookieImporter.ImportError.self) {
+            try BrowserCookieKeychainAccessGate.withUserInteractionDisallowed {
+                try BrowserCookieKeychainAccessGate.withMetadataOnlySafeStoragePreflight {
+                    try ChromeCookieImporter.chromeSafeStorageKey(
+                        for: .comet,
+                        labels: [(service: "Comet Safe Storage", account: "Comet")],
+                        passwordLookup: lookup,
+                        itemLookup: itemLookup)
+                }
+            }
+        }
+        #expect(metadataRecorder.snapshot().isEmpty)
+        #expect(passwordRecorder.snapshot().isEmpty)
+    }
+
+    @Test
+    func `metadata only preflight scope restores the upstream secret probe strategy`() throws {
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        BrowserCookieKeychainAccessGate.isDisabled = false
+        let passwordRecorder = LabelRecorder()
+        let metadataRecorder = LabelRecorder()
+
+        let lookup: ChromeCookieImporter.SafeStoragePasswordLookup = { service, account, allowInteraction in
+            passwordRecorder.record(service: service, account: account, allowInteraction: allowInteraction)
+            return (status: errSecSuccess, password: "chrome")
+        }
+        let itemLookup: ChromeCookieImporter.SafeStorageItemLookup = { service, account in
+            metadataRecorder.record(service: service, account: account, allowInteraction: false)
+            return (status: errSecSuccess, itemExists: true)
+        }
+
+        _ = try BrowserCookieKeychainAccessGate.withMetadataOnlySafeStoragePreflight {
+            try ChromeCookieImporter.chromeSafeStorageKey(
+                for: .comet,
+                passwordLookup: lookup,
+                itemLookup: itemLookup)
+        }
+
+        ChromeCookieImporter.resetSafeStorageKeyCacheForTesting()
+        _ = try ChromeCookieImporter.chromeSafeStorageKey(
+            for: .chrome,
+            passwordLookup: lookup,
+            itemLookup: itemLookup)
+
+        #expect(metadataRecorder.snapshot().count == 1)
+        #expect(passwordRecorder.snapshot().map { "\($0.account)|\($0.allowInteraction)" } == [
+            "Comet|true",
+            "Chrome|false",
+            "Chrome|false",
+        ])
     }
 
     @Test
