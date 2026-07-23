@@ -1,5 +1,6 @@
 #if os(macOS)
 import CommonCrypto
+import Darwin
 import Foundation
 import LocalAuthentication
 import Security
@@ -383,18 +384,10 @@ enum ChromeCookieImporter {
         account: String,
         allowInteraction: Bool) -> (status: OSStatus, password: String?)
     {
-        var query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-            kSecMatchLimit: kSecMatchLimitOne,
-            kSecReturnData: true,
-        ]
-        if !allowInteraction {
-            let context = LAContext()
-            context.interactionNotAllowed = true
-            query[kSecUseAuthenticationContext] = context
-        }
+        let query = self.makeGenericPasswordQuery(
+            service: service,
+            account: account,
+            allowInteraction: allowInteraction)
 
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -403,6 +396,41 @@ enum ChromeCookieImporter {
         let password = String(data: data, encoding: .utf8)
         return (status, password)
     }
+
+    static func makeGenericPasswordQuery(
+        service: String,
+        account: String,
+        allowInteraction: Bool) -> [String: Any]
+    {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnData as String: true,
+        ]
+        if !allowInteraction {
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+            query[kSecUseAuthenticationUI as String] = self.authenticationUIFailPolicy as CFString
+        }
+        return query
+    }
+
+    private static let authenticationUIFailPolicy: String = {
+        let securityPath = "/System/Library/Frameworks/Security.framework/Security"
+        guard let handle = dlopen(securityPath, RTLD_NOW) else {
+            return "u_AuthUIF"
+        }
+        defer { dlclose(handle) }
+
+        guard let symbol = dlsym(handle, "kSecUseAuthenticationUIFail") else {
+            return "u_AuthUIF"
+        }
+        let valuePointer = symbol.assumingMemoryBound(to: CFString?.self)
+        return (valuePointer.pointee as String?) ?? "u_AuthUIF"
+    }()
 
     // MARK: - Profile discovery
 

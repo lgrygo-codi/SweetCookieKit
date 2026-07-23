@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Chromium: prevent duplicate legacy Keychain prompts while preserving no-UI Safe Storage fallback. (#16, thanks @lgrygo-codi)
+
 ## 0.5.0 — 2026-07-18
 
 ### Highlights
